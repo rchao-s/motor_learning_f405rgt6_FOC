@@ -26,13 +26,19 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+
 #include "adc_sa.h"
 #include "uart_TR.h"
+#include "foc_cal.h"
+
+#include "arm_math.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
 
+
+SystemState_t system_state=IDLE;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -50,17 +56,41 @@
 /* USER CODE BEGIN PV */
 static uint32_t last_send_time = 0;
 static uint32_t current_time = 0;
+
+float theta_m2e_sum_raw=0;
+static uint32_t adc_Isa_sum	=	0;
+static uint32_t adc_Isb_sum	=	0;
+static uint32_t adc_Isc_sum	=	0;
+
+uint16_t adc_Isa_offset	=	2048;
+uint16_t adc_Isb_offset	=	2048;
+uint16_t adc_Isc_offset	=	2048;
+
+extern uint16_t CCR1;
+extern uint16_t CCR2;
+extern uint16_t CCR3;
+extern uint16_t sector_debug;
+float U_align = 2.0f;
+float theta_align = 30.0f * 3.1415926535f / 180.0f;
+
+
+static float theta_test = 0.0f;
+float U_test = 2.0f;
+
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
 
+extern void sector_cal_And_CCR(float U_alpha,float U_beta);
+
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-SystemState_t system_state=IDLE;
+
 /* USER CODE END 0 */
 
 /**
@@ -102,40 +132,100 @@ int main(void)
 	UART_TR_Init(&huart3);
 	UART_TR_StartReceiving();
 	HAL_TIM_Base_Start(&htim2); 
-	HAL_ADCEx_InjectedStart_IT(&hadc1);
-	__HAL_ADC_ENABLE_IT(&hadc1,ADC_IT_JEOC);
+
 	
-//	HAL_TIM_PWM_Start(&htim1,TIM_CHANNEL_1);
-//	HAL_TIM_PWM_Start(&htim1,TIM_CHANNEL_2);
-//	HAL_TIM_PWM_Start(&htim1,TIM_CHANNEL_3);
-	HAL_TIM_PWM_Stop(&htim1,TIM_CHANNEL_1);
-	HAL_TIM_PWM_Stop(&htim1,TIM_CHANNEL_2);
-	HAL_TIM_PWM_Stop(&htim1,TIM_CHANNEL_3);
-	HAL_TIM_PWM_Start(&htim1,TIM_CHANNEL_4);
+	__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 0);
+	__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 0);
+	__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3, 0);
+	
+	HAL_TIM_PWM_Start(&htim1,TIM_CHANNEL_1);
+	HAL_TIMEx_PWMN_Start(&htim1, TIM_CHANNEL_1);
+	
+	HAL_TIM_PWM_Start(&htim1,TIM_CHANNEL_2);	
+	HAL_TIMEx_PWMN_Start(&htim1, TIM_CHANNEL_2);
+	
+	HAL_TIM_PWM_Start(&htim1,TIM_CHANNEL_3);		
+	HAL_TIMEx_PWMN_Start(&htim1, TIM_CHANNEL_3);	
+//	
+//	HAL_TIM_PWM_Start(&htim1,TIM_CHANNEL_4);
+//	
+//	HAL_ADCEx_InjectedStart_IT(&hadc1);
+//	__HAL_ADC_ENABLE_IT(&hadc1,ADC_IT_JEOC);
+//	
+//	
+//	
+//	HAL_Delay(200);
+//	
+//	sector_cal_And_CCR(U_align * cosf(theta_align),U_align * sinf(theta_align));//吸到电角度30度的位置，
+//	
+
+//	for (int i=0;i<1000;i++)
+//	{
+//		theta_m2e_sum_raw += psa_value_deg;
+//		HAL_Delay(1);
+//	}
+//	theta_m2e = 30.0f - 7*(theta_m2e_sum_raw/1000);
+//	
+//	system_state=RUNNING;
+	
+	
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  while (1)
-  {
-    /* USER CODE END WHILE */
+while (1)
+{
+    static uint32_t last_test_time = 0;
+//static float theta_test = 0.0f;
+    /* 开环旋转矢量：1ms更新一次 */
+    if (HAL_GetTick() - last_test_time >= 1)
+    {
+        last_test_time = HAL_GetTick();
 
-    /* USER CODE BEGIN 3 */
-		
+        
+
+        float U_test = 2.0f;
+
+        float U_alpha_test =
+            U_test * cosf(theta_test);
+
+        float U_beta_test =
+            U_test * sinf(theta_test);
+
+      sector_cal_And_CCR(U_alpha_test,U_beta_test);
+			//sector_cal_And_CCR(1.732f, 1.0f);
+				
+//				__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 5400);
+//				__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 4200);
+//				__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3, 3000);
+
+				
+        theta_test += 0.003f;
+
+        if (theta_test >= 2.0f * 3.1415926f)
+        {
+            theta_test -= 2.0f * 3.1415926f;
+        }
+			}
+
+    /* 串口仍然20ms打印一次 */
     if (HAL_GetTick() - last_send_time >= 20)
     {
         last_send_time = HAL_GetTick();
 
-       UART_printf(
-            "Psa: %.2f , %.2f , %.2f , %.2f\r\n",
-            psa_value_deg,
-							Isa,
-							Isb,
-							Isc
-        );
+        UART_printf(
+    "theta:%.3f SEC:%u CCR:%u,%u,%u TIM:%lu,%lu,%lu\r\n",
+    theta_test,
+    sector_debug,
+    CCR1, CCR2, CCR3,
+    __HAL_TIM_GET_COMPARE(&htim1, TIM_CHANNEL_1),
+    __HAL_TIM_GET_COMPARE(&htim1, TIM_CHANNEL_2),
+    __HAL_TIM_GET_COMPARE(&htim1, TIM_CHANNEL_3)
+					);
     }
 		
-  }
+	}
+
   /* USER CODE END 3 */
 }
 
